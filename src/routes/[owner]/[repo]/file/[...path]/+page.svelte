@@ -100,8 +100,7 @@
 			const result = await listCommits(repoRef, {
 				token: auth.token,
 				perPage: 50,
-				page: 1,
-				path: filePath
+				page: 1
 			});
 			commits = result;
 			hasMore = result.length === 50;
@@ -125,8 +124,7 @@
 			const more = await listCommits(repoRef, {
 				token: auth.token,
 				perPage: 50,
-				page: nextPage,
-				path: filePath
+				page: nextPage
 			});
 			commits = [...commits, ...more];
 			nextPage += 1;
@@ -252,6 +250,7 @@
 	);
 	const fileStatuses = $derived(currentInfo.statuses);
 	const changedFolders = $derived(computeChangedFolders(currentInfo.statuses));
+	const touchedThisFile = $derived(currentInfo.statuses.has(filePath));
 
 	function setScrubValue(v: number) {
 		const clamped = Math.max(0, Math.min(lastIndex, v));
@@ -430,25 +429,26 @@
 				{loadingMore}
 			/>
 			<div class="commit-meta">
-				<div class="commit-title">{commitTitle(currentCommit?.commit.message ?? '')}</div>
+				<div class="commit-title">
+					{commitTitle(currentCommit?.commit.message ?? '')}
+					{#if touchedThisFile}
+						<span class="touched-badge" title="This commit changed {filePath}">touched</span>
+					{/if}
+				</div>
 				<div class="commit-sub">
-					<span class="counter">v{scrubValue + 1} of {commits.length}{hasMore ? '+' : ''}</span>
+					<span class="counter">commit {scrubValue + 1} of {commits.length}{hasMore ? '+' : ''}</span>
 					<span class="sep">·</span>
 					<span>{currentCommit?.commit.author?.name ?? 'unknown'}</span>
 					<span class="sep">·</span>
 					<span>{dateStr}</span>
-					{#if addedCount > 0}
-						<span class="sep">·</span>
-						<span class="stat-add">+{addedCount}</span>
-					{/if}
-					{#if removedCount > 0}
-						<span class="stat-del">−{removedCount}</span>
-					{/if}
-					{#if removedFileCount > 0}
-						<span class="sep">·</span>
-						<span class="stat-del">
-							{removedFileCount} file{removedFileCount === 1 ? '' : 's'} removed
-						</span>
+					{#if touchedThisFile}
+						{#if addedCount > 0}
+							<span class="sep">·</span>
+							<span class="stat-add">+{addedCount}</span>
+						{/if}
+						{#if removedCount > 0}
+							<span class="stat-del">−{removedCount}</span>
+						{/if}
 					{/if}
 				</div>
 			</div>
@@ -584,12 +584,31 @@
 		flex-shrink: 0;
 	}
 	.commit-title {
+		display: flex;
+		align-items: center;
+		gap: 8px;
 		font-size: 13px;
 		font-weight: 500;
 		margin-bottom: 2px;
+	}
+	.commit-title :first-child,
+	.commit-title > :not(.touched-badge) {
+		min-width: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+	.touched-badge {
+		flex-shrink: 0;
+		font-size: 10px;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		background: rgba(46, 160, 67, 0.18);
+		color: var(--success);
+		border: 1px solid rgba(46, 160, 67, 0.4);
+		padding: 1px 6px;
+		border-radius: 999px;
 	}
 	.commit-sub {
 		font-size: 11px;
