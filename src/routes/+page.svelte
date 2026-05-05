@@ -1,20 +1,47 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
+	import { onMount } from 'svelte';
 	import { parseRepoInput } from '$lib/github';
 	import { ArrowRight } from '@lucide/svelte';
 
 	let input = $state('');
 	let error = $state<string | null>(null);
 
+	function destinationFor(repoArg: string, fileArg: string | null): string {
+		const { owner, repo } = parseRepoInput(repoArg);
+		if (fileArg) {
+			const encoded = fileArg
+				.replace(/^\/+/, '')
+				.split('/')
+				.map((seg) => encodeURIComponent(seg))
+				.join('/');
+			return `/${owner}/${repo}/file/${encoded}`;
+		}
+		return `/${owner}/${repo}`;
+	}
+
 	function open() {
 		error = null;
 		try {
-			const { owner, repo } = parseRepoInput(input);
-			goto(`/${owner}/${repo}`);
+			goto(destinationFor(input, null));
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		}
 	}
+
+	onMount(() => {
+		const repoParam = page.url.searchParams.get('repo');
+		if (!repoParam) return;
+		const fileParam = page.url.searchParams.get('file');
+		try {
+			const dest = destinationFor(repoParam, fileParam);
+			goto(dest, { replaceState: true });
+		} catch (e) {
+			input = repoParam;
+			error = e instanceof Error ? e.message : String(e);
+		}
+	});
 
 	const examples = [
 		{ label: 'sveltejs/svelte', value: 'sveltejs/svelte' },
@@ -67,6 +94,10 @@
 		<div class="tips">
 			<p>
 				<kbd>Space</kbd> play · <kbd>←</kbd> <kbd>→</kbd> step · <kbd>S</kbd> toggle sidebar
+			</p>
+			<p class="muted">
+				Tip: append <code>?repo=owner/name</code> (or <code>?repo=owner/name&amp;file=path/to/x.ts</code>)
+				to auto-load.
 			</p>
 			<p class="muted">
 				Public repos work without auth (60 req/hr limit). Add a token in the top-right for higher
@@ -154,7 +185,8 @@
 	.muted {
 		opacity: 0.7;
 	}
-	kbd {
+	kbd,
+	code {
 		font-family: var(--font-mono);
 		background: var(--bg-elev);
 		border: 1px solid var(--border);
