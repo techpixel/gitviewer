@@ -308,6 +308,33 @@ export function extractFilenames(diff: string): string[] {
 	return out.sort();
 }
 
+export type PatchLine =
+	| { type: 'hunk'; text: string }
+	| { type: 'added'; text: string }
+	| { type: 'removed'; text: string }
+	| { type: 'context'; text: string };
+
+/**
+ * Parse a single file's unified-diff patch (as returned in a commit's
+ * `files[].patch`) into color-codable lines for inline rendering. The leading
+ * +/- marker is stripped from the text; `type` carries that information.
+ */
+export function parsePatch(patch: string): PatchLine[] {
+	const out: PatchLine[] = [];
+	for (const raw of patch.split('\n')) {
+		if (raw.startsWith('@@')) {
+			out.push({ type: 'hunk', text: raw });
+		} else if (raw.startsWith('+')) {
+			out.push({ type: 'added', text: raw.slice(1) });
+		} else if (raw.startsWith('-')) {
+			out.push({ type: 'removed', text: raw.slice(1) });
+		} else {
+			out.push({ type: 'context', text: raw.startsWith(' ') ? raw.slice(1) : raw });
+		}
+	}
+	return out;
+}
+
 export async function getCommitDiff(
 	{ owner, repo }: RepoRef,
 	sha: string,

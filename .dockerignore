@@ -1,0 +1,12 @@
+node_modules
+build
+.svelte-kit
+.output
+.vercel
+.netlify
+.wrangler
+.git
+.env
+.env.*
+.DS_Store
+Thumbs.db

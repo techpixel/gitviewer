@@ -8,6 +8,7 @@
 		getCommitDetail,
 		shortSha,
 		commitTitle,
+		parsePatch,
 		type CommitSummary,
 		type RepoRef,
 		type TreeEntry,
@@ -30,7 +31,9 @@
 		FileMinus,
 		FileEdit,
 		FileSymlink,
-		FileQuestion
+		FileQuestion,
+		ChevronRight,
+		ChevronDown
 	} from '@lucide/svelte';
 
 	const repoRef = $derived<RepoRef>({ owner: page.params.owner!, repo: page.params.repo! });
@@ -54,6 +57,20 @@
 
 	const commitInfoCache = new Map<string, CommitInfo>();
 	let currentInfo = $state<CommitInfo>(EMPTY_INFO);
+
+	// Whether diffs default to expanded. Persists as you move through the
+	// timeline. `expandOverrides` holds per-commit exceptions (files toggled
+	// against the current mode) and is cleared whenever the commit changes.
+	let expandAllMode = $state(false);
+	let expandOverrides = $state<Set<string>>(new Set());
+	const isExpanded = $derived(
+		(filename: string) =>
+			expandAllMode ? !expandOverrides.has(filename) : expandOverrides.has(filename)
+	);
+	const allExpanded = $derived(
+		currentInfo.files.length > 0 &&
+			currentInfo.files.every((f) => isExpanded(f.filename))
+	);
 
 	let playing = $state(false);
 	let playSpeed = $state(1);
@@ -172,6 +189,30 @@
 			void ensureTree(currentCommit.sha);
 		}
 	});
+
+	// Clear per-commit overrides when we move to a different commit, but keep
+	// the expand/collapse mode itself so it carries across the timeline.
+	$effect(() => {
+		void currentCommit?.sha;
+		expandOverrides = new Set();
+	});
+
+	function toggleExpand(filename: string) {
+		const next = new Set(expandOverrides);
+		if (next.has(filename)) next.delete(filename);
+		else next.add(filename);
+		expandOverrides = next;
+	}
+
+	function expandAll() {
+		expandAllMode = true;
+		expandOverrides = new Set();
+	}
+
+	function collapseAll() {
+		expandAllMode = false;
+		expandOverrides = new Set();
+	}
 
 	function setScrubValue(v: number) {
 		const clamped = Math.max(0, Math.min(lastIndex, v));
@@ -442,29 +483,68 @@
 				</div>
 			{:else}
 				<div class="files-header">
-					Files changed in this commit
+					<span>Files changed in this commit</span>
+					<div class="header-actions">
+						<button
+							class="text-btn"
+							onclick={allExpanded ? collapseAll : expandAll}
+							title={allExpanded ? 'Collapse all diffs' : 'Expand all diffs'}
+						>
+							{allExpanded ? 'Collapse all' : 'Expand all'}
+						</button>
+					</div>
 				</div>
 				<ul class="files-list">
 					{#each currentInfo.files as file (file.filename)}
 						{@const Ico = iconFor(file.status)}
 						{@const cls = colorClassFor(file.status)}
+						{@const isOpen = isExpanded(file.filename)}
 						<li>
-							<button
-								class="file-row"
-								onclick={() => goToFile(file.filename)}
-								title="Open {file.filename} in viewer"
-							>
-								<span class="badge {cls}">{letterFor(file.status)}</span>
-								<Ico size={14} class="row-icon" />
-								<span class="path">{file.filename}</span>
-								{#if file.status === 'renamed' && file.previous_filename}
-									<span class="renamed-from">← {file.previous_filename}</span>
+							<div class="file-row-wrap">
+								<button
+									class="expand-toggle"
+									onclick={() => toggleExpand(file.filename)}
+									title={isOpen ? 'Hide diff' : 'Show diff'}
+									aria-label={isOpen ? 'Hide diff' : 'Show diff'}
+									aria-expanded={isOpen}
+								>
+									{#if isOpen}
+										<ChevronDown size={14} />
+									{:else}
+										<ChevronRight size={14} />
+									{/if}
+								</button>
+								<button
+									class="file-row"
+									onclick={() => goToFile(file.filename)}
+									title="Open {file.filename} in viewer"
+								>
+									<span class="badge {cls}">{letterFor(file.status)}</span>
+									<Ico size={14} class="row-icon" />
+									<span class="path">{file.filename}</span>
+									{#if file.status === 'renamed' && file.previous_filename}
+										<span class="renamed-from">← {file.previous_filename}</span>
+									{/if}
+									<span class="row-stats">
+										{#if file.additions > 0}<span class="stat-add">+{file.additions}</span>{/if}
+										{#if file.deletions > 0}<span class="stat-del">−{file.deletions}</span>{/if}
+									</span>
+								</button>
+							</div>
+							{#if isOpen}
+								{#if file.patch}
+									<pre class="diff-block"><code
+											>{#each parsePatch(file.patch) as pl, i (i)}<span class="dline {pl.type}">{pl.text || ' '}</span>
+{/each}</code
+										></pre>
+								{:else}
+									<div class="diff-empty">
+										No inline diff available{file.status === 'renamed'
+											? ' (renamed without changes).'
+											: ' — open the file to view it.'}
+									</div>
 								{/if}
-								<span class="row-stats">
-									{#if file.additions > 0}<span class="stat-add">+{file.additions}</span>{/if}
-									{#if file.deletions > 0}<span class="stat-del">−{file.deletions}</span>{/if}
-								</span>
-							</button>
+							{/if}
 						</li>
 					{/each}
 				</ul>
@@ -582,6 +662,10 @@
 		overflow: hidden;
 	}
 	.files-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
 		padding: 10px 16px;
 		font-size: 11px;
 		text-transform: uppercase;
@@ -589,6 +673,24 @@
 		color: var(--text-dim);
 		border-bottom: 1px solid var(--border);
 		flex-shrink: 0;
+	}
+	.header-actions {
+		display: inline-flex;
+		gap: 4px;
+	}
+	.text-btn {
+		font-size: 11px;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		color: var(--text-dim);
+		background: transparent;
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		padding: 3px 8px;
+	}
+	.text-btn:hover {
+		color: var(--accent);
+		background: var(--bg-elev-2);
 	}
 	.files-list {
 		list-style: none;
@@ -600,23 +702,85 @@
 	.files-list li {
 		margin: 0;
 	}
+	.file-row-wrap {
+		display: flex;
+		align-items: stretch;
+		border-bottom: 1px solid var(--border);
+	}
+	.expand-toggle {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		flex-shrink: 0;
+		width: 28px;
+		padding: 0;
+		background: transparent;
+		border: none;
+		border-radius: 0;
+		color: var(--text-dim);
+	}
+	.expand-toggle:hover {
+		background: var(--bg-elev-2);
+		color: var(--accent);
+	}
 	.file-row {
 		display: flex;
 		align-items: center;
 		gap: 8px;
-		width: 100%;
+		flex: 1;
+		min-width: 0;
 		text-align: left;
 		background: transparent;
 		border: none;
-		border-bottom: 1px solid var(--border);
 		border-radius: 0;
-		padding: 8px 16px;
+		padding: 8px 16px 8px 4px;
 		color: var(--text);
 		font-family: var(--font-mono);
 		font-size: 12.5px;
 	}
 	.file-row:hover {
 		background: var(--bg-elev-2);
+	}
+	.diff-block {
+		margin: 0;
+		padding: 4px 0;
+		background: var(--bg);
+		border-bottom: 1px solid var(--border);
+		font-family: var(--font-mono);
+		font-size: 10.5px;
+		line-height: 1.35;
+		overflow-x: auto;
+	}
+	.diff-block code {
+		display: block;
+		min-width: 100%;
+	}
+	.dline {
+		display: block;
+		padding: 0 16px 0 28px;
+		white-space: pre;
+	}
+	.dline.hunk {
+		color: var(--accent);
+		background: var(--bg-elev-2);
+	}
+	.dline.added {
+		background: rgba(46, 160, 67, 0.18);
+		color: var(--success);
+	}
+	.dline.removed {
+		background: rgba(248, 81, 73, 0.16);
+		color: var(--danger);
+	}
+	.dline.context {
+		color: var(--text-dim);
+	}
+	.diff-empty {
+		padding: 8px 16px 8px 28px;
+		font-size: 12px;
+		color: var(--text-dim);
+		border-bottom: 1px solid var(--border);
+		font-style: italic;
 	}
 	.file-row :global(.row-icon) {
 		color: var(--text-dim);
